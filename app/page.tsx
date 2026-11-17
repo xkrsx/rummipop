@@ -6,7 +6,7 @@ import { PlayerProfile } from "@/components/PlayerProfile";
 import { authenticateByPin, getPlayerByPin } from "@/services/playerService";
 import type { Player } from "@/types/database";
 
-const SESSION_PIN_KEY = "rummimart.session.pin";
+const SESSION_PIN_KEY = "rummipop.session.pin";
 
 type AuthStatus = "restoring" | "anonymous" | "authenticated";
 
