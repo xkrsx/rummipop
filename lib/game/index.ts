@@ -10,3 +10,20 @@ export {
 export type { Tile, TileColor, TileNumber, TileSet } from "./tiles";
 
 export { calculateSetPoints, validateBoard, validateSet } from "./rules";
+
+export {
+  GameRuleError,
+  INITIAL_HAND_SIZE,
+  INITIAL_MELD_POINTS,
+  commitTurn,
+  createTwoPlayerGame,
+  drawTileAndEndTurn,
+  resetTurn,
+} from "./gameState";
+export type {
+  GameState,
+  GameStatus,
+  MatchPlayer,
+  PlayerState,
+  TurnStartSnapshot,
+} from "./gameState";
