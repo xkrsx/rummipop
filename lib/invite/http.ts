@@ -1,5 +1,5 @@
 import { unstable_rethrow } from "next/navigation";
-import { readSessionPlayer } from "@/lib/auth/session";
+import { SessionLookupError, readSessionPlayer } from "@/lib/auth/session";
 import { InviteFlowError, runInviteFlow } from "@/lib/invite/store";
 import type { InviteParticipant, InviteSnapshot } from "@/lib/invite/types";
 import type { SessionPlayer } from "@/types/database";
@@ -38,6 +38,10 @@ export async function handleInviteAction(
     return inviteJson(snapshot);
   } catch (error) {
     unstable_rethrow(error);
+
+    if (error instanceof SessionLookupError) {
+      return inviteJson({ message: error.message }, 503);
+    }
 
     if (error instanceof InviteFlowError) {
       return inviteJson({ message: error.message }, error.statusCode);

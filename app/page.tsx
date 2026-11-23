@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { HomeScreen } from "@/components/HomeScreen";
-import { readSessionPlayer } from "@/lib/auth/session";
+import { SessionLookupError, readSessionPlayer } from "@/lib/auth/session";
+import type { SessionPlayer } from "@/types/database";
 
 export default function Home() {
   return (
@@ -12,9 +14,45 @@ export default function Home() {
   );
 }
 
+async function loadHomeSession(): Promise<
+  | { status: "ready"; player: SessionPlayer | null }
+  | { status: "offline"; message: string }
+> {
+  try {
+    return { status: "ready", player: await readSessionPlayer() };
+  } catch (error) {
+    if (error instanceof SessionLookupError) {
+      return { status: "offline", message: error.message };
+    }
+
+    throw error;
+  }
+}
+
 async function HomeSession() {
-  const player = await readSessionPlayer();
-  return <HomeScreen initialPlayer={player} />;
+  const session = await loadHomeSession();
+  if (session.status === "offline") {
+    return <SessionReconnect message={session.message} />;
+  }
+
+  return <HomeScreen initialPlayer={session.player} />;
+}
+
+function SessionReconnect({ message }: { message: string }) {
+  return (
+    <section
+      aria-label="Połączenie z serwerem"
+      className="flex w-full max-w-sm flex-col gap-4 rounded-3xl border border-amber-400/40 bg-zinc-900 px-6 py-6 text-center shadow-sm"
+    >
+      <p className="text-sm font-medium text-amber-100">{message}</p>
+      <Link
+        href="/"
+        className="flex h-14 w-full items-center justify-center rounded-2xl bg-white text-base font-semibold text-zinc-950 shadow-sm transition hover:bg-zinc-200"
+      >
+        Odśwież stronę
+      </Link>
+    </section>
+  );
 }
 
 function SessionRestoreFallback() {

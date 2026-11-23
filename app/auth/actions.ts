@@ -3,9 +3,12 @@
 import { unstable_rethrow } from "next/navigation";
 import {
   clearSessionCookie,
+  readSessionPlayerId,
   toSessionPlayer,
   writeSessionPlayerId,
 } from "@/lib/auth/session";
+import { endActiveMatch, runMatchFlow } from "@/lib/game/match-store";
+import { cancelInviteOnLogout, runInviteFlow } from "@/lib/invite/store";
 import { authenticateByPin } from "@/services/playerService";
 import type { SessionPlayer } from "@/types/database";
 
@@ -43,7 +46,22 @@ export async function signInWithPin(pin: string): Promise<SignInResult> {
   }
 }
 
-/** Clears the session cookie for the browser that requested sign-out. */
+/**
+ * Drops an unaccepted invitation and a playing match for this browser,
+ * then clears its session cookie.
+ * The cookie is read locally. A failed player lookup must not reach this
+ * path: network errors stay on the poll and leave the invitation, the match, and the session.
+ */
 export async function signOut(): Promise<void> {
+  const playerId = await readSessionPlayerId();
+  if (playerId !== null) {
+    await runInviteFlow(() => {
+      cancelInviteOnLogout(playerId);
+    });
+    await runMatchFlow(() => {
+      endActiveMatch(playerId, "logout");
+    });
+  }
+
   await clearSessionCookie();
 }

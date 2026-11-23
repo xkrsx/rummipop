@@ -4,6 +4,12 @@
  * Every function is pure: it returns a new state and does not mutate the
  * arguments, including nested tiles and sets. Rule failures throw
  * {@link GameRuleError} with a Polish message that can be shown to the player.
+ *
+ * A playing turn carries `turnExpiresAt`, a server deadline. When that instant
+ * is reached, {@link resolveExpiredTurns} restores the turn-start snapshot,
+ * draws one tile when the pile still has one, and passes the turn. Missed
+ * windows are applied in order, so a later request still lands on the seat
+ * the server clock already moved to.
  */
 
 import { calculateSetPoints, validateBoard } from "./rules";
@@ -19,6 +25,9 @@ export const INITIAL_HAND_SIZE = 14;
 
 /** Lowest total a player's own opening sets must reach. */
 export const INITIAL_MELD_POINTS = 30;
+
+/** How long the active player has to commit a move, measured on the server clock. */
+export const TURN_LIMIT_MS = 60_000;
 
 export type GameStatus = "waiting" | "playing" | "finished";
 
@@ -58,6 +67,11 @@ export interface GameState {
   drawPile: Tile[];
   board: TileSet[];
   turnStartSnapshot: TurnStartSnapshot | null;
+  /**
+   * Epoch milliseconds when the active turn must be committed.
+   * Null once the match is no longer in play.
+   */
+  turnExpiresAt: number | null;
   winnerId: string | null;
 }
 
@@ -169,6 +183,10 @@ function opponentIndex(index: 0 | 1): 0 | 1 {
   return index === 0 ? 1 : 0;
 }
 
+function turnDeadline(now: number): number {
+  return now + TURN_LIMIT_MS;
+}
+
 function withActivePlayer(
   players: readonly [PlayerState, PlayerState],
   index: 0 | 1,
@@ -259,10 +277,13 @@ function seatedPlayer(seat: MatchPlayer, hand: Tile[]): PlayerState {
  * The shuffled deck gives 14 tiles to each player, in seat order, and the
  * remainder becomes the draw pile. The first seat plays first.
  * `random` matches `Math.random` and is used only to shuffle.
+ * `now` is the server clock in epoch milliseconds. The first turn expires
+ * one {@link TURN_LIMIT_MS} window after that instant.
  */
 export function createTwoPlayerGame(
   players: readonly [MatchPlayer, MatchPlayer],
   random: () => number = Math.random,
+  now: number = Date.now(),
 ): GameState {
   assertExactlyTwoPlayers([...players]);
 
@@ -282,6 +303,7 @@ export function createTwoPlayerGame(
     drawPile,
     board: [],
     turnStartSnapshot: freshSnapshot([], firstHand),
+    turnExpiresAt: turnDeadline(now),
     winnerId: null,
   };
 }
@@ -297,6 +319,7 @@ export function commitTurn(
   state: GameState,
   proposedBoard: readonly TileSet[],
   remainingHand: readonly Tile[],
+  now: number = Date.now(),
 ): GameState {
   const snapshot = playableSnapshot(state);
   if (!validateBoard(proposedBoard)) {
@@ -378,6 +401,7 @@ export function commitTurn(
       drawPile,
       board,
       turnStartSnapshot: freshSnapshot(snapshot.board, snapshot.hand),
+      turnExpiresAt: null,
       winnerId: active.id,
     };
   }
@@ -391,6 +415,7 @@ export function commitTurn(
     drawPile,
     board,
     turnStartSnapshot: freshSnapshot(board, players[nextIndex].hand),
+    turnExpiresAt: turnDeadline(now),
     winnerId: null,
   };
 }
@@ -399,8 +424,10 @@ export function commitTurn(
  * Puts the table and the active rack back to the start of the turn, then ends it.
  * The first tile of the draw pile is added to that restored rack. An empty pile
  * still passes the turn, without giving the player a tile.
+ * `now` starts the opponent's deadline. A timeout passes the expired instant
+ * so the next window stays aligned with the server clock.
  */
-export function drawTileAndEndTurn(state: GameState): GameState {
+export function drawTileAndEndTurn(state: GameState, now: number = Date.now()): GameState {
   const snapshot = playableSnapshot(state);
   const index = state.currentPlayerIndex;
   const active = state.players[index];
@@ -429,6 +456,7 @@ export function drawTileAndEndTurn(state: GameState): GameState {
     drawPile,
     board,
     turnStartSnapshot: freshSnapshot(board, players[nextIndex].hand),
+    turnExpiresAt: turnDeadline(now),
     winnerId: null,
   };
 }
@@ -436,6 +464,7 @@ export function drawTileAndEndTurn(state: GameState): GameState {
 /**
  * Puts the table and the active rack back to `turnStartSnapshot`.
  * The same player stays on turn and nothing is drawn.
+ * The deadline does not move: undoing a layout is still the same turn.
  */
 export function resetTurn(state: GameState): GameState {
   const snapshot = playableSnapshot(state);
@@ -459,6 +488,62 @@ export function resetTurn(state: GameState): GameState {
     drawPile: cloneTiles(state.drawPile),
     board,
     turnStartSnapshot: freshSnapshot(board, hand),
+    turnExpiresAt: state.turnExpiresAt,
     winnerId: null,
   };
+}
+
+/** One turn the server closed because `turnExpiresAt` had already passed. */
+export interface TurnTimeout {
+  playerId: string;
+  drewTile: boolean;
+  /** Epoch milliseconds of the deadline that closed this turn. */
+  expiredAt: number;
+}
+
+export interface ResolvedTurns {
+  state: GameState;
+  timeouts: TurnTimeout[];
+}
+
+const MAX_CATCH_UP_TURNS = 10_000;
+
+/**
+ * Closes every turn whose deadline is at or before `now`.
+ * Each closed turn is restored from its snapshot, draws one tile when the
+ * pile has one, and hands the next window to the other player. The next
+ * deadline starts at the previous deadline, not at `now`, so time spent
+ * disconnected still consumes whole turns. The input state is not mutated.
+ * When nothing has expired, the same state object is returned.
+ */
+export function resolveExpiredTurns(state: GameState, now: number = Date.now()): ResolvedTurns {
+  const timeouts: TurnTimeout[] = [];
+  let current = state;
+
+  while (
+    current.status === "playing" &&
+    current.turnExpiresAt !== null &&
+    Number.isFinite(current.turnExpiresAt) &&
+    now >= current.turnExpiresAt &&
+    timeouts.length < MAX_CATCH_UP_TURNS
+  ) {
+    const expiredAt = current.turnExpiresAt;
+    const active = current.players[current.currentPlayerIndex];
+    const pileCount = current.drawPile.length;
+    const next = drawTileAndEndTurn(current, expiredAt);
+    timeouts.push({
+      playerId: active.id,
+      drewTile: pileCount > 0,
+      expiredAt,
+    });
+
+    if (next.turnExpiresAt === null || next.turnExpiresAt <= expiredAt) {
+      current = next;
+      break;
+    }
+
+    current = next;
+  }
+
+  return { state: current, timeouts };
 }

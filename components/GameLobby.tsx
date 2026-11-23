@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SyncStatus } from "@/components/SyncStatus";
+import { useServerCountdown } from "@/components/useServerCountdown";
+import { offlineSyncMessage, syncFailureMessage } from "@/lib/client/sync-message";
+import type { MatchPhase } from "@/lib/game/match-types";
 import {
   INVITE_STATUSES,
   type InviteParticipant,
@@ -10,7 +14,6 @@ import {
 } from "@/lib/invite/types";
 
 const POLL_INTERVAL_MS = 1000;
-const CLOCK_INTERVAL_MS = 200;
 
 type LobbyAction = "open" | "accept" | "cancel";
 
@@ -22,6 +25,7 @@ const ACTION_PATH: Record<LobbyAction, string> = {
 
 interface GameLobbyProps {
   playerId: string;
+  matchPhase: MatchPhase;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,7 +116,19 @@ function formatCountdown(remainingMs: number): string {
   return `${String(minutes)}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function statusCopy(snapshot: InviteSnapshot): string {
+function matchIsClosed(matchPhase: MatchPhase): boolean {
+  return matchPhase === "finished" || matchPhase === "aborted";
+}
+
+function statusCopy(snapshot: InviteSnapshot, matchPhase: MatchPhase): string {
+  if (matchPhase === "aborted" && snapshot.status === "confirmed_ready") {
+    return "Partia została przerwana. Anuluj zaproszenie, aby rozpocząć następną.";
+  }
+
+  if (matchPhase === "finished" && snapshot.status === "confirmed_ready") {
+    return "Partia zakończona. Anuluj zaproszenie, aby rozpocząć następną.";
+  }
+
   switch (snapshot.status) {
     case "idle":
       return "Zaproś drugiego gracza. Na potwierdzenie gotowości jest 90 sekund.";
@@ -129,9 +145,13 @@ function statusCopy(snapshot: InviteSnapshot): string {
   }
 }
 
-function headingCopy(snapshot: InviteSnapshot | null): string {
+function headingCopy(snapshot: InviteSnapshot | null, matchPhase: MatchPhase): string {
   if (snapshot === null) {
-    return "Partia dla dwóch graczy";
+    return matchIsClosed(matchPhase) ? "Następna partia" : "Partia dla dwóch graczy";
+  }
+
+  if (matchIsClosed(matchPhase) && snapshot.status === "confirmed_ready") {
+    return "Następna partia";
   }
 
   switch (snapshot.status) {
@@ -148,48 +168,19 @@ function headingCopy(snapshot: InviteSnapshot | null): string {
   }
 }
 
-/**
- * Local countdown corrected by the latest server clock.
- * The server still decides when the invitation expires.
- */
-function useRemainingMs(snapshot: InviteSnapshot | null): number {
-  const [remainingMs, setRemainingMs] = useState(0);
-
-  useEffect(() => {
-    if (snapshot === null || snapshot.status !== "waiting_for_opponent" || snapshot.expiresAt === null) {
-      setRemainingMs(0);
-      return;
-    }
-
-    const expiresAtMs = Date.parse(snapshot.expiresAt);
-    const serverNowMs = Date.parse(snapshot.serverNow);
-    if (Number.isNaN(expiresAtMs) || Number.isNaN(serverNowMs)) {
-      setRemainingMs(snapshot.remainingMs);
-      return;
-    }
-
-    const clockOffset = serverNowMs - Date.now();
-
-    const update = () => {
-      setRemainingMs(Math.max(0, expiresAtMs - (Date.now() + clockOffset)));
-    };
-
-    update();
-    const timer = window.setInterval(update, CLOCK_INTERVAL_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [snapshot]);
-
-  return remainingMs;
-}
-
-export function GameLobby({ playerId }: GameLobbyProps) {
+export function GameLobby({ playerId, matchPhase }: GameLobbyProps) {
   const [snapshot, setSnapshot] = useState<InviteSnapshot | null>(null);
   const [pendingAction, setPendingAction] = useState<LobbyAction | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const revisionRef = useRef(0);
-  const remainingMs = useRemainingMs(snapshot);
+  const remainingMs = useServerCountdown(
+    snapshot?.status === "waiting_for_opponent" ? snapshot.expiresAt : null,
+    snapshot?.serverNow ?? null,
+    snapshot?.remainingMs ?? 0,
+    snapshot?.status === "waiting_for_opponent",
+  );
 
   const applySnapshot = useCallback((next: InviteSnapshot) => {
     if (next.revision < revisionRef.current) {
@@ -205,6 +196,7 @@ export function GameLobby({ playerId }: GameLobbyProps) {
         next.role === current.role &&
         next.expiresAt === current.expiresAt &&
         next.confirmedAt === current.confirmedAt &&
+        next.serverNow === current.serverNow &&
         next.host?.id === current.host?.id &&
         next.opponent?.id === current.opponent?.id
       ) {
@@ -214,6 +206,23 @@ export function GameLobby({ playerId }: GameLobbyProps) {
       return next;
     });
     setErrorMessage(null);
+    setSyncMessage(null);
+  }, []);
+
+  useEffect(() => {
+    const onOnline = () => {
+      setRetryNonce((value) => value + 1);
+    };
+    const onOffline = () => {
+      setSyncMessage(offlineSyncMessage());
+    };
+
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
   }, []);
 
   useEffect(() => {
@@ -221,27 +230,29 @@ export function GameLobby({ playerId }: GameLobbyProps) {
     let timer = 0;
 
     const poll = async () => {
-      try {
-        const next = await requestInvite("/api/invite", "GET");
-        if (stopped) {
-          return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        if (!stopped) {
+          setSyncMessage(offlineSyncMessage());
         }
+      } else {
+        try {
+          const next = await requestInvite("/api/invite", "GET");
+          if (stopped) {
+            return;
+          }
 
-        applySnapshot(next);
-      } catch (error) {
-        if (!stopped) {
-          setErrorMessage(
-            error instanceof Error
-              ? error.message
-              : "Nie udało się odczytać stanu zaproszenia.",
-          );
+          applySnapshot(next);
+        } catch (error) {
+          if (!stopped) {
+            setSyncMessage(syncFailureMessage(error));
+          }
         }
-      } finally {
-        if (!stopped) {
-          timer = window.setTimeout(() => {
-            void poll();
-          }, POLL_INTERVAL_MS);
-        }
+      }
+
+      if (!stopped) {
+        timer = window.setTimeout(() => {
+          void poll();
+        }, POLL_INTERVAL_MS);
       }
     };
 
@@ -251,7 +262,7 @@ export function GameLobby({ playerId }: GameLobbyProps) {
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [applySnapshot, playerId]);
+  }, [applySnapshot, playerId, retryNonce]);
 
   const runAction = useCallback(async (action: LobbyAction) => {
     setPendingAction(action);
@@ -261,11 +272,11 @@ export function GameLobby({ playerId }: GameLobbyProps) {
       const next = await requestInvite(ACTION_PATH[action], "POST");
       applySnapshot(next);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "Nie udało się zaktualizować zaproszenia. Spróbuj ponownie.",
-      );
+      const message = syncFailureMessage(error);
+      setErrorMessage(message);
+      if (error instanceof TypeError || (typeof navigator !== "undefined" && navigator.onLine === false)) {
+        setSyncMessage(message);
+      }
     } finally {
       setPendingAction(null);
     }
@@ -288,10 +299,10 @@ export function GameLobby({ playerId }: GameLobbyProps) {
     >
       <header className="flex flex-col gap-2 text-center">
         <h2 className="text-xl font-semibold tracking-tight text-zinc-50">
-          {headingCopy(snapshot)}
+          {headingCopy(snapshot, matchPhase)}
         </h2>
         <p className="text-sm text-zinc-400" aria-live="polite">
-          {snapshot === null ? "Sprawdzanie zaproszenia…" : statusCopy(snapshot)}
+          {snapshot === null ? "Sprawdzanie zaproszenia…" : statusCopy(snapshot, matchPhase)}
         </p>
       </header>
 
@@ -369,13 +380,17 @@ export function GameLobby({ playerId }: GameLobbyProps) {
             {pendingAction === "cancel"
               ? "Anulowanie…"
               : status === "confirmed_ready"
-                ? "Wróć do poczekalni"
+                ? matchIsClosed(matchPhase)
+                  ? "Anuluj zaproszenie"
+                  : "Wróć do poczekalni"
                 : role === "opponent"
                   ? "Odrzuć zaproszenie"
                   : "Anuluj zaproszenie"}
           </button>
         ) : null}
       </div>
+
+      <SyncStatus message={syncMessage} />
 
       {errorMessage !== null ? (
         <p role="alert" className="text-center text-sm font-medium text-red-300">

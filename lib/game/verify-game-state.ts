@@ -8,10 +8,12 @@ import assert from "node:assert/strict";
 import {
   GameRuleError,
   INITIAL_HAND_SIZE,
+  TURN_LIMIT_MS,
   commitTurn,
   createTwoPlayerGame,
   drawTileAndEndTurn,
   resetTurn,
+  resolveExpiredTurns,
   type GameState,
   type GameStatus,
   type MatchPlayer,
@@ -113,6 +115,7 @@ function makeState(input: {
   scores?: readonly [number, number];
   snapshot?: TurnStartSnapshot | null;
   status?: GameStatus;
+  turnExpiresAt?: number | null;
   winnerId?: string | null;
 }): GameState {
   const index = input.currentPlayerIndex ?? 0;
@@ -149,6 +152,7 @@ function makeState(input: {
     drawPile: [...(input.drawPile ?? [])],
     board,
     turnStartSnapshot: snapshot,
+    turnExpiresAt: input.turnExpiresAt === undefined ? 1_900_000_000_000 : input.turnExpiresAt,
     winnerId: input.winnerId ?? null,
   };
 }
@@ -760,6 +764,135 @@ function verifyUnplayableState(): void {
   );
 }
 
+function verifyTurnTimer(): void {
+  const startedAt = 1_700_000_000_000;
+  const seats: [MatchPlayer, MatchPlayer] = [ANNA, BARTEK];
+  const game = createTwoPlayerGame(seats, () => 0, startedAt);
+  const before = structuredClone(game);
+
+  expectEqual(
+    game.turnExpiresAt,
+    startedAt + TURN_LIMIT_MS,
+    "the opening turn expires 60 seconds after the server clock",
+  );
+  expectEqual(TURN_LIMIT_MS, 60_000, "a turn lasts 60 seconds");
+
+  const early = resolveExpiredTurns(game, startedAt + TURN_LIMIT_MS - 1);
+  expectEqual(early.state, game, "a turn before the deadline is the same state");
+  expectEqual(early.timeouts.length, 0, "no timeout is recorded before the deadline");
+
+  const due = resolveExpiredTurns(game, startedAt + TURN_LIMIT_MS);
+  const drawn = drawTileAndEndTurn(game, startedAt + TURN_LIMIT_MS);
+  expectEqual(due.timeouts.length, 1, "reaching the deadline closes one turn");
+  expectEqual(due.timeouts[0]?.playerId, ANNA.id, "the opening player is the one who timed out");
+  expectEqual(due.timeouts[0]?.drewTile, true, "a stocked pile records a timeout draw");
+  expectEqual(due.timeouts[0]?.expiredAt, startedAt + TURN_LIMIT_MS, "the timeout records its deadline");
+  expectDeepEqual(due.state, drawn, "a timeout restores, draws, and passes like ending the turn");
+  expectEqual(due.state.currentPlayerIndex, 1, "the timeout passes the turn");
+  expectEqual(due.state.players[0].hand.length, INITIAL_HAND_SIZE + 1, "the timeout adds one tile");
+  expectEqual(
+    due.state.turnExpiresAt,
+    startedAt + TURN_LIMIT_MS * 2,
+    "the next deadline starts when the missed one ended",
+  );
+  expectDeepEqual(game, before, "resolving a timeout does not mutate the previous match");
+
+  const skipped = resolveExpiredTurns(game, startedAt + TURN_LIMIT_MS * 2);
+  expectEqual(skipped.timeouts.length, 2, "two elapsed windows close two turns");
+  expectEqual(skipped.timeouts[1]?.playerId, BARTEK.id, "the second missed window belongs to the other player");
+  expectEqual(skipped.state.currentPlayerIndex, 0, "two timeouts return the turn to the first player");
+  expectEqual(skipped.state.players[0].hand.length, INITIAL_HAND_SIZE + 1, "the first player drew on the first timeout");
+  expectEqual(skipped.state.players[1].hand.length, INITIAL_HAND_SIZE + 1, "the second player drew on the second timeout");
+  expectEqual(
+    skipped.state.drawPile.length,
+    DECK_SIZE - INITIAL_HAND_SIZE * 2 - 2,
+    "each timeout draw removes one tile from the pile",
+  );
+  expectEqual(
+    skipped.state.turnExpiresAt,
+    startedAt + TURN_LIMIT_MS * 3,
+    "catch-up leaves the following 60 second window",
+  );
+
+  const empty = makeState({
+    hands: [[BLUE_1], [YELLOW_1]],
+    board: [setOf("sevens", THREE_SEVENS)],
+    drawPile: [],
+    snapshot: { board: [], hand: [RED_1] },
+    turnExpiresAt: 5_000 + TURN_LIMIT_MS,
+  });
+  const emptyBefore = structuredClone(empty);
+  const emptyResolved = resolveExpiredTurns(empty, 5_000 + TURN_LIMIT_MS);
+  expectEqual(emptyResolved.timeouts.length, 1, "an empty pile still expires the turn");
+  expectEqual(emptyResolved.timeouts[0]?.drewTile, false, "an empty pile does not record a draw");
+  expectDeepEqual(emptyResolved.state.players[0].hand, [RED_1], "the timeout restores the rack and adds nothing");
+  expectDeepEqual(emptyResolved.state.board, [], "the timeout restores the table");
+  expectEqual(emptyResolved.state.currentPlayerIndex, 1, "an empty pile still passes the turn");
+  expectEqual(
+    emptyResolved.state.turnExpiresAt,
+    5_000 + TURN_LIMIT_MS * 2,
+    "the passed turn gets its own deadline",
+  );
+  expectDeepEqual(empty, emptyBefore, "an empty-pile timeout leaves the previous state unchanged");
+
+  const now = 8_000_000;
+  const exact = makeState({
+    hands: [[...THREE_TENS, RED_1], [YELLOW_1]],
+    turnExpiresAt: now + TURN_LIMIT_MS,
+  });
+  const opened = commitTurn(exact, [setOf("tens", THREE_TENS)], [RED_1], now + 1_500);
+  expectEqual(
+    opened.turnExpiresAt,
+    now + 1_500 + TURN_LIMIT_MS,
+    "committing starts a fresh 60 second turn from the server clock",
+  );
+  expectEqual(opened.currentPlayerIndex, 1, "committing still passes the turn");
+  expectDeepEqual(opened.drawPile, exact.drawPile, "committing does not draw");
+
+  const goingOut = makeState({
+    hands: [THREE_TENS, [YELLOW_1]],
+    turnExpiresAt: now + TURN_LIMIT_MS,
+  });
+  const won = commitTurn(goingOut, [setOf("tens", THREE_TENS)], [], now + 2_000);
+  expectEqual(won.turnExpiresAt, null, "ending the match clears the turn deadline");
+  expectEqual(
+    resolveExpiredTurns(won, now + TURN_LIMIT_MS * 5).state,
+    won,
+    "a finished match ignores the clock",
+  );
+
+  const finishedClock = makeState({
+    hands: [[RED_1], [YELLOW_1]],
+    status: "finished",
+    winnerId: ANNA.id,
+    turnExpiresAt: now,
+  });
+  expectEqual(
+    resolveExpiredTurns(finishedClock, now + TURN_LIMIT_MS).state,
+    finishedClock,
+    "a deadline left on a finished match does not draw or pass",
+  );
+
+  const messy = makeState({
+    hands: [[BLUE_1], [YELLOW_1]],
+    board: [setOf("sevens", THREE_SEVENS)],
+    drawPile: [BLACK_1],
+    snapshot: { board: [], hand: [RED_1, RED_2] },
+    turnExpiresAt: now + 30_000,
+  });
+  const restored = resetTurn(messy);
+  expectEqual(restored.turnExpiresAt, now + 30_000, "undo keeps the original deadline");
+  expectEqual(restored.currentPlayerIndex, 0, "undo keeps the same player");
+  const voluntary = drawTileAndEndTurn(messy, now + 4_000);
+  expectEqual(
+    voluntary.turnExpiresAt,
+    now + 4_000 + TURN_LIMIT_MS,
+    "a chosen draw starts the opponent's turn from the server clock",
+  );
+  expectDeepEqual(voluntary.players[0].hand, [RED_1, RED_2, BLACK_1], "a chosen draw still restores and draws one tile");
+}
+
+verifyTurnTimer();
 verifySetup();
 verifyInitialMeld();
 verifyCommit();

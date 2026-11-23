@@ -15,15 +15,19 @@ export {
   GameRuleError,
   INITIAL_HAND_SIZE,
   INITIAL_MELD_POINTS,
+  TURN_LIMIT_MS,
   commitTurn,
   createTwoPlayerGame,
   drawTileAndEndTurn,
   resetTurn,
+  resolveExpiredTurns,
 } from "./gameState";
 export type {
   GameState,
   GameStatus,
   MatchPlayer,
   PlayerState,
+  ResolvedTurns,
   TurnStartSnapshot,
+  TurnTimeout,
 } from "./gameState";

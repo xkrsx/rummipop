@@ -232,3 +232,18 @@ export function cancelInvite(playerId: string, now = Date.now()): InviteSnapshot
   markChanged();
   return toSnapshot(current, playerId, now);
 }
+
+/**
+ * Cancels an invitation this player sent, if the other player has not accepted it yet.
+ * An accepted invitation stays in place. No invitation is a no-op.
+ */
+export function cancelInviteOnLogout(playerId: string, now = Date.now()): void {
+  const current = settle(now);
+  if (current === null || current.status !== "waiting_for_opponent" || current.host.id !== playerId) {
+    return;
+  }
+
+  current.status = "cancelled";
+  current.cancelledAtMs = now;
+  markChanged();
+}
