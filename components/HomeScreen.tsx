@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { reloadSignedInPlayer, signInWithPin, signOut } from "@/app/auth/actions";
+import { ChatPanel } from "@/components/ChatPanel";
 import { GameLobby } from "@/components/GameLobby";
 import { MatchScreen } from "@/components/MatchScreen";
 import { PinEntry } from "@/components/PinEntry";
@@ -97,6 +98,7 @@ export function HomeScreen({ initialPlayer }: HomeScreenProps) {
       {matchPhase === "playing" ? null : (
         <GameLobby playerId={player.id} matchPhase={matchPhase} />
       )}
+      <ChatPanel playerId={player.id} />
       {logoutError !== null ? (
         <p role="alert" className="text-center text-sm font-medium text-red-300">
           {logoutError}

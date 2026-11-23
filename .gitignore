@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local chat log used until the chat_messages table exists
+/data/chat-messages.json

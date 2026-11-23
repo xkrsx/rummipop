@@ -36,9 +36,15 @@ export interface GameState {
   updated_at: string;
 }
 
+/**
+ * One message in the shared two-player chat.
+ * `createdAt` is the time the server stored the row.
+ * The thread is kept across new matches and sign-outs.
+ */
 export interface ChatMessage {
   id: string;
-  sender_pin: string;
-  content: string;
-  created_at: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  createdAt: string;
 }
