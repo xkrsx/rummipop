@@ -9,6 +9,9 @@ export interface Player {
   created_at: string;
 }
 
+/** Player fields safe to render after sign-in. The PIN stays on the server. */
+export type SessionPlayer = Omit<Player, "pin">;
+
 export interface GameState {
   id: string;
   status: "waiting" | "playing" | "finished";

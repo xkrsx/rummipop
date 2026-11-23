@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { Player } from "@/types/database";
+import type { SessionPlayer } from "@/types/database";
 
 export interface PlayerProfileProps {
-  player: Player;
-  onLogout: () => void;
+  player: SessionPlayer;
+  onLogout: () => void | Promise<void>;
 }
 
 interface PlayerAvatarProps {

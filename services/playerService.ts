@@ -49,11 +49,14 @@ function readErrorMessage(error: unknown): string {
   return "Failed to query players";
 }
 
-async function findPlayerByPin(pin: string): Promise<Player | null> {
+async function findPlayer(
+  column: "id" | "pin",
+  value: string,
+): Promise<Player | null> {
   const { data, error } = await supabase
     .from("players")
     .select(PLAYER_COLUMNS.join(", "))
-    .eq("pin", pin)
+    .eq(column, value)
     .maybeSingle();
 
   if (error) {
@@ -71,12 +74,12 @@ async function findPlayerByPin(pin: string): Promise<Player | null> {
   return data;
 }
 
-/** Looks up a player by PIN for sign-in. Returns null when no row matches. */
+/** Looks up one of the fixed players by PIN. Returns null when no row matches. */
 export function authenticateByPin(pin: string): Promise<Player | null> {
-  return findPlayerByPin(pin);
+  return findPlayer("pin", pin);
 }
 
-/** Reloads a player by PIN so stats stay current after a page refresh. */
-export function getPlayerByPin(pin: string): Promise<Player | null> {
-  return findPlayerByPin(pin);
+/** Reloads a fixed player from the session cookie's player id. */
+export function getPlayerById(playerId: string): Promise<Player | null> {
+  return findPlayer("id", playerId);
 }

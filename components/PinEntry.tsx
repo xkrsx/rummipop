@@ -285,7 +285,7 @@ export function PinEntry({ onComplete }: PinEntryProps) {
           Wpisz PIN
         </h2>
         <p className="text-sm text-zinc-400">
-          Sześć cyfr, aby dołączyć do stołu
+          Sześć cyfr, aby się zalogować.
         </p>
       </div>
 
