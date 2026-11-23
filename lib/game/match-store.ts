@@ -1,5 +1,6 @@
 import { createTwoPlayerGame, drawTileAndEndTurn, resolveExpiredTurns, type GameState, type MatchPlayer, type TurnTimeout } from "@/lib/game/gameState";
 import type { MatchPhase, MatchSeatView, MatchSnapshot } from "@/lib/game/match-types";
+import { queueNormalWin } from "@/lib/game/player-stats";
 
 const STORE_KEY = "__rummipopMatchStore";
 
@@ -101,6 +102,21 @@ function seatView(player: GameState["players"][number]): MatchSeatView {
     name: player.name,
     handCount: player.hand.length,
   };
+}
+
+/** Queues a stat write only for a normal win. Aborts and logouts pass the closure through and are ignored. */
+function queueResult(record: MatchRecord | null): void {
+  if (record === null) {
+    return;
+  }
+
+  queueNormalWin({
+    gameId: record.game.id,
+    closedWithoutResult: record.closure !== null,
+    status: record.game.status,
+    winnerId: record.game.winnerId,
+    players: record.game.players,
+  });
 }
 
 function idleSnapshot(now: number): MatchSnapshot {
@@ -255,6 +271,7 @@ export function beginMatch(
     return;
   }
 
+  queueResult(current);
   replaceMatch(players, now);
 }
 
@@ -283,6 +300,7 @@ export function readMatch(
   }
 
   const record = settle(now);
+  queueResult(record);
   if (record === null) {
     return idleSnapshot(now);
   }
@@ -317,6 +335,7 @@ export function drawMatchTile(playerId: string, now = Date.now()): MatchSnapshot
 
   const game = record.game;
   if (game.status !== "playing") {
+    queueResult(record);
     throw new MatchFlowError("Ta partia już się zakończyła.", 409, snapshot);
   }
 
@@ -363,6 +382,7 @@ export function endActiveMatch(
   }
 
   if (record.game.status !== "playing") {
+    queueResult(record);
     if (reason === "logout") {
       return toSnapshot(record, playerId, now);
     }

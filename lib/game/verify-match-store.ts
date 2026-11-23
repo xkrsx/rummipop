@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { INITIAL_HAND_SIZE, TURN_LIMIT_MS } from "./gameState";
 import { DECK_SIZE } from "./tiles";
 import { MatchFlowError, beginMatch, drawMatchTile, endActiveMatch, readMatch } from "./match-store";
+import { drainNormalWins } from "./player-stats";
 
 const ANNA = { id: "anna", name: "Anna" };
 const BARTEK = { id: "bartek", name: "Bartek" };
@@ -273,6 +274,12 @@ expectEqual(
   readMatch(MARTA.id, null, closedAt + 50_000).notice,
   "Kuba wylogował się. Partia została przerwana i nie została zapisana.",
   "Marta is told that Kuba logged out in the masculine",
+);
+
+expectEqual(
+  drainNormalWins().length,
+  0,
+  "aborts and logouts do not queue a stat update",
 );
 
 console.log(`Rummikub match store verification passed (${assertions} assertions).`);

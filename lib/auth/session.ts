@@ -28,9 +28,11 @@ export function toSessionPlayer(player: Player): SessionPlayer {
     id: player.id,
     name: player.name,
     avatar_url: player.avatar_url,
-    games_played: player.games_played,
-    games_won: player.games_won,
-    fastest_win_seconds: player.fastest_win_seconds,
+    gamesPlayed: player.gamesPlayed,
+    wins: player.wins,
+    longestWinStreak: player.longestWinStreak,
+    currentWinStreak: player.currentWinStreak,
+    fastestWin: player.fastestWin,
     created_at: player.created_at,
   };
 }

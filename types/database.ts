@@ -1,11 +1,21 @@
-export interface Player {
+/**
+ * Match record for one fixed player.
+ * `fastestWin` is that player's own completed turns in their quickest win,
+ * counting draws and the winning play. It stays null until the first win.
+ */
+export interface PlayerStats {
+  gamesPlayed: number;
+  wins: number;
+  longestWinStreak: number;
+  currentWinStreak: number;
+  fastestWin: number | null;
+}
+
+export interface Player extends PlayerStats {
   id: string;
   pin: string;
   name: string;
   avatar_url: string | null;
-  games_played: number;
-  games_won: number;
-  fastest_win_seconds: number | null;
   created_at: string;
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { signInWithPin, signOut } from "@/app/auth/actions";
+import { useCallback, useEffect, useState } from "react";
+import { reloadSignedInPlayer, signInWithPin, signOut } from "@/app/auth/actions";
 import { GameLobby } from "@/components/GameLobby";
 import { MatchScreen } from "@/components/MatchScreen";
 import { PinEntry } from "@/components/PinEntry";
@@ -43,6 +43,37 @@ export function HomeScreen({ initialPlayer }: HomeScreenProps) {
     setLogoutError(null);
     setPlayer(result.player);
   }, []);
+
+  useEffect(() => {
+    if (matchPhase !== "finished" || playerId === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void reloadSignedInPlayer().then((result) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (!result.ok) {
+        setLogoutError(result.message);
+        return;
+      }
+
+      setPlayer((current) => {
+        if (current === null || current.id !== result.player.id) {
+          return current;
+        }
+
+        return result.player;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [matchPhase, playerId]);
 
   const handleLogout = useCallback(async () => {
     setLogoutError(null);

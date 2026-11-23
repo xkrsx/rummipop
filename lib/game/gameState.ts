@@ -46,6 +46,11 @@ export interface PlayerState {
   hasInitialMeld: boolean;
   /** Running score. Dealing and turn resolution leave it unchanged. */
   score: number;
+  /**
+   * Turns this seat has completed. A draw, a timeout, and a committed play
+   * each count as one. Undoing a layout does not. The winning play counts.
+   */
+  turnsTaken: number;
 }
 
 /**
@@ -132,6 +137,7 @@ function clonePlayer(player: PlayerState): PlayerState {
     hand: cloneTiles(player.hand),
     hasInitialMeld: player.hasInitialMeld,
     score: player.score,
+    turnsTaken: player.turnsTaken,
   };
 }
 
@@ -269,6 +275,7 @@ function seatedPlayer(seat: MatchPlayer, hand: Tile[]): PlayerState {
     hand,
     hasInitialMeld: false,
     score: 0,
+    turnsTaken: 0,
   };
 }
 
@@ -388,6 +395,7 @@ export function commitTurn(
     // A legal commit is a later play, or an opening meld that just passed.
     hasInitialMeld: true,
     score: active.score,
+    turnsTaken: active.turnsTaken + 1,
   });
   const board = cloneSets(proposedBoard);
   const drawPile = cloneTiles(state.drawPile);
@@ -445,6 +453,7 @@ export function drawTileAndEndTurn(state: GameState, now: number = Date.now()): 
     hand,
     hasInitialMeld: active.hasInitialMeld,
     score: active.score,
+    turnsTaken: active.turnsTaken + 1,
   });
   const nextIndex = opponentIndex(index);
 
@@ -478,6 +487,7 @@ export function resetTurn(state: GameState): GameState {
     hand,
     hasInitialMeld: active.hasInitialMeld,
     score: active.score,
+    turnsTaken: active.turnsTaken,
   });
 
   return {

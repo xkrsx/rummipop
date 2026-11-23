@@ -117,6 +117,7 @@ function makeState(input: {
   status?: GameStatus;
   turnExpiresAt?: number | null;
   winnerId?: string | null;
+  turnsTaken?: readonly [number, number];
 }): GameState {
   const index = input.currentPlayerIndex ?? 0;
   const board = (input.board ?? []).map((set) => setOf(set.id, set.tiles));
@@ -139,6 +140,7 @@ function makeState(input: {
         hand: hands[0],
         hasInitialMeld: input.hasInitialMeld?.[0] ?? false,
         score: input.scores?.[0] ?? 0,
+        turnsTaken: input.turnsTaken?.[0] ?? 0,
       },
       {
         id: BARTEK.id,
@@ -146,6 +148,7 @@ function makeState(input: {
         hand: hands[1],
         hasInitialMeld: input.hasInitialMeld?.[1] ?? false,
         score: input.scores?.[1] ?? 0,
+        turnsTaken: input.turnsTaken?.[1] ?? 0,
       },
     ],
     currentPlayerIndex: index,
@@ -577,6 +580,8 @@ function verifyDraw(): void {
   expectEqual(next.status, "playing", "drawing leaves the match in play");
   expectEqual(next.currentPlayerIndex, 1, "drawing passes the turn");
   expectEqual(next.winnerId, null, "drawing does not declare a winner");
+  expectEqual(next.players[0].turnsTaken, 1, "drawing completes one turn for the active player");
+  expectEqual(next.players[1].turnsTaken, 0, "drawing does not count a turn for the waiting player");
   expectEqual(next.players[0].hasInitialMeld, false, "drawing does not count as an opening meld");
   expectEqual(next.players[0].score, 3, "drawing keeps the active score");
   expectEqual(next.players[1].score, 5, "drawing keeps the opponent's score");
@@ -688,6 +693,8 @@ function verifyWin(): void {
   expectDeepEqual(won.players[0].hand, [RED_1], "the other rack stays in place");
   expectEqual(won.players[0].score, 1, "winning does not change the recorded scores");
   expectEqual(won.players[1].score, 2, "winning does not award a score by itself");
+  expectEqual(won.players[1].turnsTaken, 1, "the winning play counts as a completed turn");
+  expectEqual(won.players[0].turnsTaken, 0, "the player who does not move keeps their turn count");
   expectDeepEqual(won.drawPile, [BLACK_1], "winning does not draw");
   expectDeepEqual(
     won.turnStartSnapshot,

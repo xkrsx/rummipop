@@ -33,16 +33,31 @@ function initialsFromName(name: string): string {
     .toLocaleUpperCase("pl-PL");
 }
 
-function formatDuration(totalSeconds: number): string {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-
-  return `${String(minutes)}:${seconds.toString().padStart(2, "0")}`;
-}
-
 function formatCount(value: number): string {
   return new Intl.NumberFormat("pl-PL").format(value);
+}
+
+function turnsWord(turns: number): string {
+  const last = turns % 10;
+  const lastTwo = turns % 100;
+
+  if (turns === 1) {
+    return "tura";
+  }
+
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+    return "tury";
+  }
+
+  return "tur";
+}
+
+function formatFastestWin(turns: number | null): string {
+  if (turns === null) {
+    return "Brak rekordu";
+  }
+
+  return `${formatCount(turns)} ${turnsWord(turns)}`;
 }
 
 /**
@@ -51,10 +66,6 @@ function formatCount(value: number): string {
  */
 export function PlayerProfile({ player, onLogout }: PlayerProfileProps) {
   const initials = initialsFromName(player.name);
-  const fastestWin =
-    player.fastest_win_seconds === null
-      ? "Brak rekordu"
-      : formatDuration(player.fastest_win_seconds);
 
   return (
     <section
@@ -76,9 +87,11 @@ export function PlayerProfile({ player, onLogout }: PlayerProfileProps) {
       </header>
 
       <dl className="grid grid-cols-1 gap-3">
-        <Stat label="Rozegrane partie" value={formatCount(player.games_played)} />
-        <Stat label="Wygrane" value={formatCount(player.games_won)} />
-        <Stat label="Najszybsze zwycięstwo" value={fastestWin} />
+        <Stat label="Rozegrane partie" value={formatCount(player.gamesPlayed)} />
+        <Stat label="Wygrane" value={formatCount(player.wins)} />
+        <Stat label="Najdłuższa seria zwycięstw" value={formatCount(player.longestWinStreak)} />
+        <Stat label="Aktualna seria zwycięstw" value={formatCount(player.currentWinStreak)} />
+        <Stat label="Najszybsze zwycięstwo" value={formatFastestWin(player.fastestWin)} />
       </dl>
 
       <button

@@ -2,6 +2,7 @@ import { unstable_rethrow } from "next/navigation";
 import { SessionLookupError, readSessionPlayer } from "@/lib/auth/session";
 import { MatchFlowError, runMatchFlow } from "@/lib/game/match-store";
 import type { MatchSnapshot } from "@/lib/game/match-types";
+import { flushNormalWinStats } from "@/services/playerService";
 import type { SessionPlayer } from "@/types/database";
 
 const UNAUTHENTICATED_MESSAGE = "Zaloguj się, aby grać.";
@@ -30,6 +31,7 @@ export async function handleMatchAction(
     }
 
     const snapshot = await runMatchFlow(() => action(player));
+    await flushNormalWinStats();
     return matchJson(snapshot);
   } catch (error) {
     unstable_rethrow(error);

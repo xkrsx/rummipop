@@ -2,14 +2,16 @@
 
 import { unstable_rethrow } from "next/navigation";
 import {
+  SessionLookupError,
   clearSessionCookie,
+  readSessionPlayer,
   readSessionPlayerId,
   toSessionPlayer,
   writeSessionPlayerId,
 } from "@/lib/auth/session";
 import { endActiveMatch, runMatchFlow } from "@/lib/game/match-store";
 import { cancelInviteOnLogout, runInviteFlow } from "@/lib/invite/store";
-import { authenticateByPin } from "@/services/playerService";
+import { authenticateByPin, flushNormalWinStats } from "@/services/playerService";
 import type { SessionPlayer } from "@/types/database";
 
 const INVALID_PIN_MESSAGE = "Nie znaleziono gracza o tym PIN-ie";
@@ -46,6 +48,28 @@ export async function signInWithPin(pin: string): Promise<SignInResult> {
   }
 }
 
+/** Reloads the signed-in player's match record after a finished game. */
+export async function reloadSignedInPlayer(): Promise<
+  | { ok: true; player: SessionPlayer }
+  | { ok: false; message: string }
+> {
+  try {
+    const player = await readSessionPlayer();
+    if (player === null) {
+      return { ok: false, message: "Sesja wygasła. Zaloguj się ponownie." };
+    }
+
+    return { ok: true, player };
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof SessionLookupError) {
+      return { ok: false, message: error.message };
+    }
+
+    return { ok: false, message: "Nie udało się odświeżyć statystyk." };
+  }
+}
+
 /**
  * Drops an unaccepted invitation and a playing match for this browser,
  * then clears its session cookie.
@@ -61,6 +85,13 @@ export async function signOut(): Promise<void> {
     await runMatchFlow(() => {
       endActiveMatch(playerId, "logout");
     });
+    try {
+      await flushNormalWinStats();
+    } catch (error) {
+      unstable_rethrow(error);
+      // A logout never records the match it just closed. A normal win that was
+      // already queued stays queued when this write fails.
+    }
   }
 
   await clearSessionCookie();
