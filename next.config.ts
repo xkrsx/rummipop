@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Dev assets and the HMR WebSocket are cross-site when opened through a tunnel.
+  allowedDevOrigins: ["*.trycloudflare.com", "trycloudflare.com", "127.0.0.1"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
