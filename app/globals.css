@@ -24,3 +24,13 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * touch-action is not inherited. The thread and everything inside it must
+ * share pan-y so a horizontal swipe can start on a bubble or on empty space,
+ * while vertical movement stays a normal scroll.
+ */
+.chat-thread,
+.chat-thread * {
+  touch-action: pan-y;
+}

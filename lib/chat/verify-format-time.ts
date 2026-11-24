@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 
-import { formatChatAbsoluteTime, formatChatTimestamp } from "./format-time";
+import { formatChatAbsoluteTime, formatChatRevealTime, formatChatTimestamp } from "./format-time";
 
 let assertions = 0;
 
@@ -43,5 +43,18 @@ expectEqual(
 );
 expectEqual(formatChatAbsoluteTime("2026-11-24T08:05:00.000Z"), "24.11.2026 09:05", "the tooltip is the Warsaw date and clock");
 expectEqual(formatChatTimestamp("not-a-time", now), "not-a-time", "an unreadable timestamp is left unchanged");
+expectEqual(formatChatRevealTime(ago(2 * 60 * 60), now), "11:00", "a reveal on the same Warsaw day is HH:MM");
+expectEqual(formatChatRevealTime(ago(30), now), "12:59", "a reveal stays on the clock even when the label is still relative");
+expectEqual(
+  formatChatRevealTime("2026-11-23T22:30:00.000Z", now),
+  "23.11.2026 23:30",
+  "a reveal from an earlier Warsaw day includes the date",
+);
+expectEqual(
+  formatChatRevealTime("2026-11-23T23:30:00.000Z", now),
+  "00:30",
+  "just after Warsaw midnight is still today's clock",
+);
+expectEqual(formatChatRevealTime("not-a-time", now), "not-a-time", "an unreadable reveal time is left unchanged");
 
 console.log(`chat time: ${assertions} checks passed`);

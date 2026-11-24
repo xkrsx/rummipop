@@ -58,6 +58,25 @@ function warsawFields(epochMs: number): WarsawFields | null {
   return fields;
 }
 
+function warsawDateClock(
+  createdMs: number,
+  nowMs: number,
+): { sameDay: boolean; clock: string; dated: string } | null {
+  const created = warsawFields(createdMs);
+  const now = warsawFields(nowMs);
+  if (created === null || now === null) {
+    return null;
+  }
+
+  const clock = `${created.hour}:${created.minute}`;
+  const sameDay = created.year === now.year && created.month === now.month && created.day === now.day;
+  return {
+    sameDay,
+    clock,
+    dated: `${created.day}.${created.month}.${created.year} ${clock}`,
+  };
+}
+
 function polishAgo(count: number, one: string, few: string, many: string): string {
   const mod10 = count % 10;
   const mod100 = count % 100;
@@ -71,7 +90,7 @@ function polishAgo(count: number, one: string, few: string, many: string): strin
   return `${count} ${form} temu`;
 }
 
-/** Full Warsaw date and clock, used as the stable label and the time tooltip. */
+/** Full Warsaw date and clock. Fallback label before the server clock is known. */
 export function formatChatAbsoluteTime(createdAt: string): string {
   const createdMs = Date.parse(createdAt);
   if (Number.isNaN(createdMs)) {
@@ -110,16 +129,29 @@ export function formatChatTimestamp(createdAt: string, nowMs: number): string {
     return polishAgo(minutes, "minutę", "minuty", "minut");
   }
 
-  const created = warsawFields(createdMs);
-  const now = warsawFields(nowMs);
-  if (created === null || now === null) {
+  const label = warsawDateClock(createdMs, nowMs);
+  if (label === null) {
     return createdAt;
   }
 
-  const clock = `${created.hour}:${created.minute}`;
-  if (created.year === now.year && created.month === now.month && created.day === now.day) {
-    return clock;
+  return label.sameDay ? label.clock : label.dated;
+}
+
+/**
+ * Exact Warsaw clock revealed by dragging the thread.
+ * Today's messages are `HH:MM`. Earlier Warsaw days include `dd.MM.yyyy`.
+ * `nowMs` should be the server clock, not an uncorrected client clock.
+ */
+export function formatChatRevealTime(createdAt: string, nowMs: number): string {
+  const createdMs = Date.parse(createdAt);
+  if (Number.isNaN(createdMs) || Number.isNaN(nowMs)) {
+    return createdAt;
   }
 
-  return `${created.day}.${created.month}.${created.year} ${clock}`;
+  const label = warsawDateClock(createdMs, nowMs);
+  if (label === null) {
+    return createdAt;
+  }
+
+  return label.sameDay ? label.clock : label.dated;
 }
