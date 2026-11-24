@@ -1,5 +1,13 @@
 import { localChatLog } from "@/lib/chat/file-log";
 import { ChatStoreError } from "@/lib/chat/errors";
+import {
+  CHAT_NEWER_FETCH_LIMIT,
+  CHAT_RECENT_PAGE_SIZE,
+  compareChatMessages,
+  pageChatMessages,
+  type ChatCursor,
+  type ChatReadQuery,
+} from "@/lib/chat/page";
 import type { ChatSnapshot } from "@/lib/chat/types";
 import { validateChatText } from "@/lib/chat/validate";
 import { supabase } from "@/lib/supabase";
@@ -77,18 +85,6 @@ function messageFromRow(row: unknown): ChatMessage {
   };
 }
 
-function compareMessages(left: ChatMessage, right: ChatMessage): number {
-  if (left.createdAt === right.createdAt) {
-    if (left.id === right.id) {
-      return 0;
-    }
-
-    return left.id < right.id ? -1 : 1;
-  }
-
-  return left.createdAt < right.createdAt ? -1 : 1;
-}
-
 /**
  * Shared chat for the two fixed players.
  * Nothing here deletes messages. A new match and a sign-out leave the thread in place.
@@ -118,13 +114,13 @@ async function chatUsesDatabase(): Promise<boolean> {
   throwStoreError(error, READ_FAILED_MESSAGE);
 }
 
-async function listFromSupabase(): Promise<ChatMessage[]> {
-  const { data, error } = await supabase
-    .from("chat_messages")
-    .select(MESSAGE_COLUMNS)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
+interface SupabaseResult {
+  data: unknown;
+  error: unknown;
+}
 
+async function readRows(query: PromiseLike<SupabaseResult>): Promise<ChatMessage[]> {
+  const { data, error } = await query;
   if (error) {
     throwStoreError(error, READ_FAILED_MESSAGE);
   }
@@ -134,6 +130,103 @@ async function listFromSupabase(): Promise<ChatMessage[]> {
   }
 
   return data.map((row) => messageFromRow(row));
+}
+
+function messageSelect() {
+  return supabase.from("chat_messages").select(MESSAGE_COLUMNS);
+}
+
+async function listFromSupabase(): Promise<ChatMessage[]> {
+  return readRows(
+    messageSelect().order("created_at", { ascending: true }).order("id", { ascending: true }),
+  );
+}
+
+/** Newest-first rows become oldest-first. An extra row means older history remains. */
+function chronologicalPage(newestFirst: readonly ChatMessage[], pageSize: number): {
+  messages: ChatMessage[];
+  hasOlder: boolean;
+} {
+  const hasOlder = newestFirst.length > pageSize;
+  const kept = hasOlder ? newestFirst.slice(0, pageSize) : newestFirst;
+  return {
+    messages: [...kept].reverse(),
+    hasOlder,
+  };
+}
+
+/**
+ * Same window as {@link pageChatMessages}, applied in the database.
+ * Ties on `created_at` use `id`, matching the file log.
+ */
+async function pageFromSupabase(query: ChatReadQuery): Promise<{
+  messages: ChatMessage[];
+  hasOlder: boolean | null;
+}> {
+  if (query.after) {
+    return messagesAfter(query.after);
+  }
+
+  if (query.before) {
+    return messagesBefore(query.before);
+  }
+
+  const newestFirst = await readRows(
+    messageSelect()
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(CHAT_RECENT_PAGE_SIZE + 1),
+  );
+  return chronologicalPage(newestFirst, CHAT_RECENT_PAGE_SIZE);
+}
+
+async function messagesBefore(cursor: ChatCursor): Promise<{ messages: ChatMessage[]; hasOlder: boolean }> {
+  const limit = CHAT_RECENT_PAGE_SIZE + 1;
+  const sameInstant = await readRows(
+    messageSelect()
+      .eq("created_at", cursor.createdAt)
+      .lt("id", cursor.id)
+      .order("id", { ascending: false })
+      .limit(limit),
+  );
+
+  let newestFirst = sameInstant;
+  if (sameInstant.length < limit) {
+    const earlier = await readRows(
+      messageSelect()
+        .lt("created_at", cursor.createdAt)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(limit - sameInstant.length),
+    );
+    newestFirst = [...sameInstant, ...earlier];
+  }
+
+  return chronologicalPage(newestFirst, CHAT_RECENT_PAGE_SIZE);
+}
+
+async function messagesAfter(cursor: ChatCursor): Promise<{ messages: ChatMessage[]; hasOlder: null }> {
+  const sameInstant = await readRows(
+    messageSelect()
+      .eq("created_at", cursor.createdAt)
+      .gt("id", cursor.id)
+      .order("id", { ascending: true })
+      .limit(CHAT_NEWER_FETCH_LIMIT),
+  );
+
+  let messages = sameInstant;
+  if (sameInstant.length < CHAT_NEWER_FETCH_LIMIT) {
+    const later = await readRows(
+      messageSelect()
+        .gt("created_at", cursor.createdAt)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(CHAT_NEWER_FETCH_LIMIT - sameInstant.length),
+    );
+    messages = [...sameInstant, ...later];
+  }
+
+  return { messages, hasOlder: null };
 }
 
 async function appendToSupabase(sender: ChatSender, text: string): Promise<ChatMessage> {
@@ -162,9 +255,19 @@ export async function listChatMessages(): Promise<ChatMessage[]> {
   return localChatLog.list();
 }
 
-export async function readChatSnapshot(): Promise<ChatSnapshot> {
+/**
+ * One page of the shared thread.
+ * No query returns the recent preview. `before` returns the next older page.
+ * `after` returns messages written since that cursor and leaves `hasOlder` null.
+ */
+export async function readChatSnapshot(query: ChatReadQuery = {}): Promise<ChatSnapshot> {
+  const page = (await chatUsesDatabase())
+    ? await pageFromSupabase(query)
+    : pageChatMessages(await localChatLog.list(), query);
+
   return {
-    messages: await listChatMessages(),
+    messages: [...page.messages].sort(compareChatMessages),
+    hasOlder: page.hasOlder,
     serverNow: new Date().toISOString(),
   };
 }
@@ -202,6 +305,6 @@ export function withMessage(snapshot: ChatSnapshot, message: ChatMessage): ChatS
 
   return {
     ...snapshot,
-    messages: [...snapshot.messages, message].sort(compareMessages),
+    messages: [...snapshot.messages, message].sort(compareChatMessages),
   };
 }

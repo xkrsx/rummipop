@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ChatStoreError } from "@/lib/chat/errors";
+import { compareChatMessages } from "@/lib/chat/page";
 import { validateChatText } from "@/lib/chat/validate";
 import type { ChatMessage } from "@/types/database";
 
@@ -37,18 +38,6 @@ function isChatMessage(value: unknown): value is ChatMessage {
     typeof value.text === "string" &&
     typeof value.createdAt === "string"
   );
-}
-
-function compareMessages(left: ChatMessage, right: ChatMessage): number {
-  if (left.createdAt === right.createdAt) {
-    if (left.id === right.id) {
-      return 0;
-    }
-
-    return left.id < right.id ? -1 : 1;
-  }
-
-  return left.createdAt < right.createdAt ? -1 : 1;
 }
 
 /**
@@ -91,7 +80,7 @@ export function createChatLog(filePath: string) {
       throw new ChatStoreError(READ_FAILED_MESSAGE, 500);
     }
 
-    return [...parsed].sort(compareMessages);
+    return [...parsed].sort(compareChatMessages);
   }
 
   async function writeMessages(messages: readonly ChatMessage[]): Promise<void> {

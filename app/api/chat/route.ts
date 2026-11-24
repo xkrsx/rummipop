@@ -1,8 +1,8 @@
 import { handleChatRead, handleChatSend } from "@/lib/chat/http";
 
 /** Polled by both players. The thread is not tied to the current match. */
-export async function GET(): Promise<Response> {
-  return handleChatRead();
+export async function GET(request: Request): Promise<Response> {
+  return handleChatRead(request);
 }
 
 /** Appends one message as the authenticated player. */
